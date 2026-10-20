@@ -1,8 +1,8 @@
-# Agent Task Harness 2.2.1 结构与运行协议报告
+# Agent Task Harness 2.2.2 结构与运行协议报告
 
 > 用途：供网页端 GPT 或其他外部评审者快速理解本仓库当前结构与协议。
 >
-> 对象：仓库当前版本（协议版本 2.2.1，2.2 二次结构审计勘误）。
+> 对象：仓库当前版本（协议版本 2.2.2，最小可运行版本）。
 >
 > 性质：框架说明，不是具体业务任务的执行记录，也没有性能基准数据。
 
@@ -145,7 +145,7 @@ ENGINE.md
 
 ## 10. Round 与父产物
 
-父产物固定为**最近一个 check 已完成且 artifact 哈希与 check 记录一致的 Round**；没有则用初始材料/空项目。Release 不作为父对象；未封存或封存失效的 Round 不得继承，可保留参考。每轮独立快照，禁止跨 Round 可写硬链接。
+父产物固定为**最近一个结论为 PASS 或 FAIL、身份一致且 artifact 哈希与 check 记录一致的合法 Check Round**；`BLOCKED`、无效 check、未封存 Round 排除；没有则用初始材料/空项目。Release 不作为父对象。每轮独立快照，禁止跨 Round 可写硬链接。
 
 ## 11. assignment 准入
 
@@ -194,7 +194,9 @@ check.md 只写 `input_sha`、`artifact_sha`、`index_sha`、结论、缺口、�
 
 ## 14. 失败与停滞
 
-同一 `failure_key` 连续两次无有效改善 → BLOCKED；记录 key、类别、normalized observed、evidence_id。验证器/环境故障连续两次未修复同样 BLOCKED。
+正式 check 结论只有 `PASS / FAIL / BLOCKED`；`INVALID` 表示本次检查无效、不提交 check.md。
+
+停滞兜底：`processed.md` 项目头可配置 `最大业务返工轮数：N`（默认 3），不单独存计数器，沿父链统计同一 input_sha 的连续 FAIL Round 数；达到 N 或同一 `failure_key` 连续两次无有效改善 → BLOCKED。验证器/环境故障不计入业务返工轮数，连续两次未修复同样 BLOCKED。
 
 ## 15. Review
 
@@ -228,7 +230,41 @@ Work 先生成 payload；入口计算 `operation_spec_sha` 后检查授权；无
 
 `release_NNN/{meta.md, artifact/}`；meta 绑定 review_id、candidate_id、candidate_round、input_sha、artifact_sha、check_sha、gate_sha、decision_sha、review_sha、released_at。临时目录 + 校验 + 串行边界内最终检查 + 原子改名；同一 review_id 只产生一个 Release；发布后不可就地修改；不强制额外索引文件。
 
-## 19. 2.2.1 相对 2.2 的勘误
+## 19. 2.2.2 最小可运行版本
+
+2.2.2 只做两件事：修运行歧义，把确定性规则交给程序。
+
+### 协议修正
+
+| 问题 | 修改 |
+|---|---|
+| Check 状态混乱 | 正式结论只允许 `PASS / FAIL / BLOCKED`；`INVALID` 表示检查无效，不提交 check.md |
+| Work 封存后无法返工 | 归档旧 `work.md` 到 `evidence/work_archived_NNN.md` 后 marker 失效，解除封存，同轮允许重新执行 |
+| `raw_prefix_sha` 不明确 | 精确字节算法：UTF-8 + LF，按 `## Input NNN` section 取 `[0, end_of_cursor_section)`；CRLF/非法 UTF-8/编号异常为 PROTOCOL_BLOCKED |
+| 停滞检测不确定 | 可配置 `最大业务返工轮数`，沿父链统计连续 FAIL Round，不单独存计数器 |
+| 父产物不严格 | 允许 PASS/FAIL 的合法 Check Round；BLOCKED 与无效 check 排除 |
+| 人工决定被覆盖 | 新 Review 生成前必须处理/归档已有 decision，禁止静默重置 |
+
+`PROTOCOL_FROZEN` 保留为安全停机状态，人工从可信副本修复，不增加审批出口。
+
+### 最小 CLI
+
+`2_tools/harness.py`（Python 标准库）执行确定性协议：
+
+| 命令 | 作用 |
+|---|---|
+| `status` | 推导阶段、异常与下一步动作 |
+| `admit` | 校验派工字段、R 引用、冻结锚点 |
+| `seal` | 计算 artifact 树哈希、写 manifest、核对封存 |
+| `evidence record/verify/reuse` | 写证据索引、校验字节/依赖、计算与匹配 `evidence_key` |
+| `review` | 生成 Review 并填充身份、`review_id`、`review_sha`、PENDING decision |
+| `consume` | claim/归档决定；APPROVE 生成 Release；REJECT 写新 Input |
+| `release` | 恢复已 claim 的发布事务 |
+| `selftest` | 临时目录最小实验 + 故障注入 |
+
+模型负责理解、实现与语义判断；程序负责哈希、结构校验、状态推导、事务与发布。`selftest` 覆盖：正常闭环、封存不一致、决定未归档时拒绝新 Review、缺 check 拒绝 PASS、raw 前缀变化。
+
+## 20. 2.2.1 相对 2.2 的勘误（历史）
 
 | 项 | 2.2.1 |
 |---|---|
@@ -243,7 +279,7 @@ Work 先生成 payload；入口计算 `operation_spec_sha` 后检查授权；无
 | 证明力 | 每项 PASS 写明被证明条件与适用域，不外推 |
 | 父产物 | 固定为最近合法 Check Round；Release 不作为父对象 |
 
-## 20. 限制与待验证
+## 21. 限制与待验证
 
 1. 写入边界、串行化、原子改名依赖宿主实现；
 2. artifact 快照成本依赖 reflink/CoW；
@@ -251,8 +287,9 @@ Work 先生成 payload；入口计算 `operation_spec_sha` 后检查授权；无
 4. 依赖集合完整性需要验证器声明；
 5. 外部副作用无法完全由本地文件表达；
 6. 临时验证器证明力仍可能不足，必须按第 13 节标注；
-7. 有/无缓存、有/无 Gate 复用的收益需要真实任务对照数据，未测前不声称更快。
+7. 有/无缓存、有/无 Gate 复用的收益需要真实任务对照数据，未测前不声称更快；
+8. CLI 目前覆盖确定性协议部分；多 Agent 编排仍由宿主负责。
 
-## 21. 给网页端 GPT 的评审提示
+## 22. 给网页端 GPT 的评审提示
 
-> 这是“文件系统即状态”的长程 Agent 任务框架（协议版本 2.2.1），不是业务项目。请评审其冻结身份锚点、阻塞终结分支、封存恢复、验证器证明力、操作审批与幂等、发布串行化与 Review 正文绑定；区分协议已规定的内容与建议扩展的内容。不要默认引入数据库、常驻 Agent 或复杂 DAG。
+> 这是“文件系统即状态”的长程 Agent 任务框架（协议版本 2.2.2），不是业务项目。请评审其冻结身份锚点、阻塞终结分支、封存恢复、验证器证明力、操作审批与幂等、发布串行化、Review 正文绑定，以及 2.2.2 的确定性 CLI；区分协议已规定的内容与建议扩展的内容。不要默认引入数据库、常驻 Agent 或复杂 DAG。

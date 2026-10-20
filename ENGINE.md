@@ -1,6 +1,6 @@
-# ENGINE 2.2.1
+# ENGINE 2.2.2
 
-协议版本：2.2.1（2.2 二次结构审计勘误）
+协议版本：2.2.2（最小可运行版本：协议减法 + 确定性部分交给程序）
 
 你的职责是维护和驱动这个框架，而不是直接执行任务本身。你不写业务代码、不修改 artifact、不代替 check_agent 验收、不在 PASS 后继续优化。
 
@@ -24,6 +24,7 @@
 8. **失败分类**：业务失败、验证器故障、环境异常、证据无效、未验证必须分开；验证器故障不得转成业务返工。
 9. **证明力与运行成功是两件事**：验证器“跑通了”不等于“足以证明”。
 10. **自动通过不等于发布**：只有有效、身份匹配且正文未变的人工 APPROVE 才能产生 Release。
+11. **确定性规则由程序执行**：哈希、结构校验、状态推导、证据索引、Review 身份填充、Release 提交由 `2_tools/harness.py` 执行；模型不手工计算这些值。
 
 ---
 
@@ -36,7 +37,7 @@ ENGINE.md
   raw.md                    原始输入，只追加
   processed.md              R/F/I/U/M + 已处理至 + 验收计划
   materials/                只读材料（有附件才需要）
-2_tools/                    稳定、可信的跨轮工具与身份校验器
+2_tools/                    稳定工具；harness.py 执行确定性协议
 3_runs/
   round_NNN/
     meta.md                 轮次身份（ADMIT 后冻结）
@@ -93,6 +94,7 @@ SHA-256，小写十六进制；不存在对象用 `NONE`。
 | `artifact_sha` | 确定性树哈希（见下） |
 | `gate_sha` | 本轮或复用轮 `gate.md` 哈希 |
 | `candidate_id` | `sha256(protocol_version \| round_id \| input_sha \| assignment_sha \| gate_sha \| artifact_sha)` |
+| `raw_prefix_sha` | raw.md 截至 processed 游标的精确字节前缀哈希（见 §5） |
 | `check_sha` | `check.md` 哈希；无则 `NONE` |
 | `index_sha` | `evidence/index.md` 哈希；无则 `NONE` |
 | `review_sha` | 生成 Review 后 `REVIEW.md` 原始字节哈希 |
@@ -125,11 +127,11 @@ SHA-256，小写十六进制；不存在对象用 `NONE`。
 3. **已 claim 决定恢复**：按 review_id 幂等完成；发布前重新校验输入新鲜度、`review_sha` 与 assignment 锚点；新输入早于提交点 → STALE，不发布。
 4. **未 claim 决定**：校验 review_id、review_sha、身份与新鲜度；有效消费，无效归档 STALE。
 5. **等待人工**：有效新鲜 Review + `decision.md = PENDING` → 不动作。
-6. **Round 初始化**：无 Round → `round_001`；未 ADMIT 且缺件 → 补齐同轮；输入落后 → 新建 Round。父产物固定为**最近一个 check 已完成且 artifact 哈希与 check 记录一致的 Round**（见 §6）；Release 不作为父对象；不得继承未封存 Work。
+6. **Round 初始化**：无 Round → `round_001`；未 ADMIT 且缺件 → 补齐同轮；输入落后 → 新建 Round。父产物固定为**最近一个结论为 PASS 或 FAIL 的合法 Check Round**（见 §6）；Release 不作为父对象；不得继承未封存 Work。
 7. **Gate**：无有效 ADMIT 且无可复用 Gate → 运行 Gate；`RETURN_CHECK` 修正后重跑；`PROTOCOL_BLOCKED` → `BLOCKED_GATE` Review 等待人工。
 8. **WORK**：ADMIT 有效、`assignment_sha` 与锚点一致、§7 确定性准入通过且缺 `work.md` → 调用/恢复 work。外部操作不在 Work 前统一审批，而是在实际调用受控操作前审批（§14）。
 9. **CHECK**：有 `work.md`，缺合法 `check.md` → 按 §10 执行。
-10. **结论**：FAIL → 新 Round；PASS/BLOCKED → 生成终结型 Review；INVALID → 本轮证据作废，先判封存是否仍有效（见 §9）。
+10. **结论**：正式 Check 结论只有 `PASS / FAIL / BLOCKED`。`INVALID` 表示本次检查无效、**不提交 check.md**，归档理由后同轮重做或按封存规则回 WORK。
 11. **发布**：只有消费有效 APPROVE 才 Release；发布提交与 raw Input 追加共用同一串行化边界（§13）；看到 PASS 不得自动发布。
 
 ---
@@ -171,7 +173,10 @@ Gate 复核输入定义，必要时定向复核 assignment。只做语义与准�
 ### 运行与复用
 
 - 首次/新增 Input/要求或计划变化时运行；
-- 复用条件：`input_sha` 与 `raw_prefix_sha` 均匹配（防止同一 Input 编号内容被静默改写）。`raw_prefix_sha = sha256(raw.md 中截至 processed 游标的字节前缀)`；`plan_sha` 不参与状态判定，必要时仅作诊断字段；
+- 复用条件：`input_sha` 与 `raw_prefix_sha` 均匹配（防止同一 Input 编号内容被静默改写）。
+- `raw_prefix_sha` 精确算法：raw.md 必须为 UTF-8 + LF；按行匹配 `^## Input ([0-9]{3,})$`；取游标 Input 对应的最后一个 section 起点到该 section 结束后、下一个 `## Input` 前或 EOF 的字节区间 `[start(start_of_cursor_section), end)`，其中 `end` = 下一个 Input 标题起始字节（或 EOF）；即包含该 section 的全部字节与结尾换行。游标为 `Input 000` 时前缀为空字节，`sha256("")`。
+- 若 raw.md 出现 CRLF、非法 UTF-8、标题编号不连续或重复：`PROTOCOL_BLOCKED`，不得靠归一化悄悄继续。
+- `plan_sha` 不参与状态判定，必要时仅作诊断字段；
 - **若本轮 assignment 触发语义复核（见 §7），不得复用旧 Gate 的 `assignment_review`**：必须针对当前 `assignment_sha` 出具复核结果；
 - **输入存在未解决 BLOCKING U 时，允许不写 assignment 直接返回 BLOCKED**；`BLOCKED_GATE` 允许 `assignment_sha = NONE`；
 - 输入可执行时，可同次审查输入与 assignment 语义；只有全部准入通过才提交最终 ADMIT 并冻结身份。
@@ -197,7 +202,7 @@ assignment_sha（仅定向复核时；否则 NONE）
 
 ## 6. Round 创建与父产物
 
-1. 父产物固定为最近一个 **check 已完成、artifact 哈希与 check 记录一致** 的 Round；没有则用初始材料/空项目。Release 不作为父对象。
+1. 父产物固定为最近一个**合法 Check Round**：`check.md` 存在、结论为 `PASS` 或 `FAIL`、身份字段一致、artifact 哈希与 check 记录一致。`BLOCKED`、无效 check、未封存 Round 一律不作为父产物；没有则用初始材料/空项目。Release 不作为父对象。
 2. 未封存或封存失效的 Round 不得作为父产物，可保留供参考。
 3. 建立独立快照；优先 reflink/CoW，否则完整复制；禁止跨 Round 可写硬链接。
 4. 写 `meta.md`、冻结 `input.md`。
@@ -254,8 +259,8 @@ artifact_sha（自报，不可信）
 
 **封存校验**：
 
-- check 开始时重算 `artifact_sha`，与 work 自报值比对；不一致 → 写 `evidence/seal_invalid_NNN.md`，Main 归档 `work.md`，同轮重做 WORK。
-- check 结束时再算一次 `E`：因开始时已确认 `S = work 自报值 W`，`E != S` 必然意味着 `E != W`，封存已失效。此时本轮 CHECK 证据作废，禁止 PASS；定位写入来源，可归因且允许时由 work 在同轮重新提交封存；越权写入或无法归因 → BLOCKED。不存在“封存仍有效、只重做 CHECK”的分支。
+- check 开始时重算 `artifact_sha`，与 work 自报值比对；不一致 → 写 `evidence/seal_invalid_NNN.md`，**Main 把 `work.md` 原子移动到 `evidence/work_archived_NNN.md`**；旧 marker 立即失效，artifact 解除封存，允许 Work 在同一 Round 重新执行并提交新的 `work.md`。
+- check 结束时再算一次 `E`：因开始时已确认 `S = work 自报值 W`，`E != S` 必然意味着 `E != W`，封存已失效。此时本轮 CHECK 证据作废，**不提交 check.md**；定位写入来源，可归因且允许时按上述归档流程回 WORK 重新封存；越权写入或无法归因 → BLOCKED。不存在“封存仍有效、只重做 CHECK”的分支。
 
 ---
 
@@ -308,14 +313,16 @@ evidence_key = sha256(
 
 ### 结论
 
-| 情况 | check 结论 | 后续 |
-|---|---|---|
-| 业务失败 | `FAIL` | 新 Round |
-| 开始校验封存不一致 | 不提交 check | 写 seal_invalid；Main 归档 work.md；同轮重做 WORK |
-| CHECK 期间 artifact 变化（`E != W`） | 本轮证据作废，不提交 PASS | 可归因则同轮重做 WORK 并重新封存；越权/无法归因 → BLOCKED |
-| 验证器/环境故障无法修复 | `BLOCKED`（class 标注） | 人工；不开业务轮 |
-| 必需要求无已执行或有效复用的验证 | `BLOCKED`（UNVERIFIED） | 补充验证或人工 |
-| 全部必需项有足够证明力 | `PASS` | 最终 Review |
+正式 Check 结论只有 `PASS / FAIL / BLOCKED`；`INVALID` 表示本次检查无效，不产生 check.md。
+
+| 情况 | 处理 |
+|---|---|
+| 业务失败 | 提交 `FAIL` |
+| 开始校验封存不一致 | 不提交 check；写 `seal_invalid`，Main 归档 work.md，同轮重做 WORK |
+| CHECK 期间 artifact 变化（`E != W`） | 不提交 check；本轮证据作废；回 WORK 重新封存或 BLOCKED |
+| 验证器/环境故障无法修复 | 提交 `BLOCKED`（class 标注） |
+| 必需要求无已执行或有效复用的验证 | 提交 `BLOCKED`（UNVERIFIED） |
+| 全部必需项有足够证明力 | 提交 `PASS` |
 
 check.md 只写：`input_sha`、`artifact_sha`、`index_sha`、结论、未通过/未验证项、ACTIVE/Superseded 覆盖汇总、失败 key；单项证据元数据留在 `evidence/index.md`。
 
@@ -329,7 +336,9 @@ check.md 只写：`input_sha`、`artifact_sha`、`index_sha`、结论、未通�
 - **FAIL**：业务上明确、可执行的问题。
 - **BLOCKED**：缺信息/权限/依赖，或必须人工选择。
 
-失败项记录 `failure_key`、类别、normalized observed、evidence_id。**同一 failure_key 连续两次没有有效改善 → BLOCKED**，停止重试；失败记录只用于诊断，不追求复杂振荡模型。验证器/环境故障连续两次未修复同样 BLOCKED。
+失败项记录 `failure_key`、类别、normalized observed、evidence_id。
+
+停滞兜底：`processed.md` 项目头可配置 `最大业务返工轮数：N`（默认 3）。该值不单独存计数器，由 Round 记录推导：沿父链回溯，统计**同一 input_sha 的连续 FAIL Round 数**（仅 `PASS/FAIL` 的合法 check 计入）；达到 N → 写 `BLOCKED_STALL` Review，停止自动重试。同一 `failure_key` 连续两次无有效改善可提前 BLOCKED。验证器/环境故障不计入业务返工轮数；连续两次未修复同样 BLOCKED。
 
 ---
 
@@ -351,7 +360,7 @@ check.md 只写：`input_sha`、`artifact_sha`、`index_sha`、结论、未通�
 6. 验证阶段、判定依据与复用摘要；
 7. 追溯路径。
 
-生成后固化为终结身份；该 Round 从此刻起不可变；`decision.md` 重置为绑定该 `review_id` 与 `review_sha` 的 PENDING。
+生成前必须先处理已有决定：若 `decision.md` 不是 `PENDING`+`NONE`，必须先按 §13 claim/归档（有效消费或 STALE），**禁止静默覆盖**。生成后正文不可变；`review_sha` 预填 decision；终结型 Review 生成后该 Round 不可变。
 
 ### BLOCKED_GATE
 
@@ -374,6 +383,8 @@ check.md 只写：`input_sha`、`artifact_sha`、`index_sha`、结论、未通�
 ## 13. 人工决策与事务
 
 `decision.md` 必填：`review_kind`、`review_id`、`review_sha`、`decision`、`反馈`；操作审批额外 `operation_ids`。允许值：`PENDING / APPROVE / REJECT / APPROVE_ACTION`。
+
+已有非 PENDING 决定不得被新 Review 覆盖：必须先 claim 并归档（有效消费或 STALE），再生成新 Review。
 
 ### 消费前校验
 
@@ -454,17 +465,34 @@ outcome：SUCCESS / FAILED / UNKNOWN
 
 ---
 
-## 17. 精简与实施顺序
+## 17. 程序化协议（2.2.2）
 
-本版（2.2.1）按二次审计补齐：`meta.assignment_sha` 冻结锚点、`BLOCKED_GATE` 终结身份、删除不可达的 CHECK 恢复分支、操作审批移到执行前、发布与输入追加串行化、mode 敏感身份、Gate 复核优先级、证据字节与 oracle 身份、证明力适用域、外部效果复核、父产物规则固定。
+确定性规则由 `2_tools/harness.py`（Python 标准库，无第三方依赖）执行，模型不再手工计算：
 
-实施顺序：
+| 命令 | 作用 |
+|---|---|
+| `status` | 读取文件推导阶段、身份一致性与下一步动作 |
+| `admit` | 校验派工字段、R 引用、input/assignment 冻结锚点 |
+| `seal` | 计算 artifact 树哈希、写 manifest、核对 work 自报值 |
+| `evidence record/verify/reuse` | 写证据索引、校验字节与依赖、计算/匹配 `evidence_key` |
+| `review` | 生成 Review 并填充身份、`review_id`、`review_sha`、PENDING decision |
+| `consume` | claim/归档决定；APPROVE 生成 Release；REJECT 写新 Input |
+| `release` | 原子提交 Release（含最终新鲜度检查） |
+| `selftest` | 在临时目录构造最小实验与故障注入，验证 CLI 自身 |
 
-1. **P0-A 冻结锚点与阻塞分支**：`meta.assignment_sha`、`BLOCKED_GATE` 身份与终结规则；
-2. **P0-B 封存与发布竞态**：删除不可达分支、CHECK 变化处理、发布串行化；
-3. **P0-C 操作与身份**：执行前审批、STARTED 持久化、mode 位纳入身份；
-4. **P1 精确化**：Gate 复核优先级、证据字节/oracle、证明力适用域、外部效果复核；
-5. **P2 测量**：有/无复用、有/无 Gate 复用的真实任务对比；未测前不声称更快。
+命令失败返回非零退出码并输出 JSON 原因。模型仍负责理解、实现与语义判断；程序负责确定规则。
+
+2.2.2 协议修订：
+
+1. 正式 Check 结论只允许 `PASS/FAIL/BLOCKED`；`INVALID` 不提交 check。
+2. Work 返工：归档旧 `work.md` 到 `evidence/work_archived_NNN.md` 后 marker 失效，同轮重新执行。
+3. `raw_prefix_sha` 给出精确字节算法与编码要求。
+4. 停滞兜底改为可配置 `最大业务返工轮数`，由 Round 记录推导。
+5. 父产物允许 PASS/FAIL 的合法 Check Round；BLOCKED 与无效 check 排除。
+6. 新 Review 生成前必须处理已有 decision，禁止静默覆盖。
+7. `PROTOCOL_FROZEN` 保留为安全停机状态，人工从可信副本修复，不加审批出口。
+
+实施顺序：修协议 → 最小 CLI → 完整示例 → 故障测试 → 真实任务对照。
 
 ---
 
@@ -482,5 +510,7 @@ outcome：SUCCESS / FAILED / UNKNOWN
 - 语义审查替代未执行验证；
 - 验证器/环境故障记成业务 FAIL 并开业务 Round；
 - 新输入到达后发布旧 APPROVE；
+- 静默覆盖非 PENDING 的 decision，或未归档就重置；
+- 手工改写 `review_id`、`review_sha`、`artifact_sha` 等程序生成的身份；
 - PASS 后继续自动优化；
 - ADMIT 后修改身份文件；WORK 提交后修改 artifact；最终 Review 生成后修改 Round。

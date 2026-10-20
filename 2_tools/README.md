@@ -1,6 +1,37 @@
 # 2_tools
 
-稳定、可信、跨 Round 复用的工具与身份校验器。能程序验证的优先程序验证，但“跑通”不等于“足以证明”。
+稳定、可信、跨 Round 复用的工具与身份校验器。2.2.2 起，协议的确定性部分由 `harness.py` 执行，模型不再手工计算哈希、判断状态合法性或拼装事务。
+
+## harness.py
+
+Python 3.8+，标准库，无第三方依赖。
+
+```bash
+python 2_tools/harness.py --root <workspace> <command>
+```
+
+| 命令 | 作用 | 退出码 |
+|---|---|---|
+| `status` | 读取文件，推导阶段、异常与下一步动作 | 0；异常写入 JSON `anomalies` |
+| `admit --round round_NNN` | 校验 assignment 字段、R 引用、input/assignment 冻结锚点 | 0 通过；42 失败；40/41 缺文件 |
+| `seal --round round_NNN [--write] [--mode-sensitive]` | 计算 artifact 树哈希，写 manifest，核对 work 自报值 | 0；50 artifact 缺失 |
+| `evidence --round ... record ...` | 记录要求、命令、输出、依赖、工具、环境、seed，自动算 `evidence_key` | 0；61–64 输入问题 |
+| `evidence --round ... verify` | 复算输出/依赖/要求哈希与 `evidence_key` | 0；65 缺索引 |
+| `evidence --round ... reuse --id E1 --key KEY` | 判断证据是否可复用 | 0 |
+| `review --round ... --kind KIND` | 生成 Review、身份字段、`review_sha` 与 PENDING decision | 0；70 存在未归档决定；73–77 条件不满足 |
+| `consume [--stale]` | claim 并消费决定：APPROVE 生成 Release，REJECT 写新 Input，STALE 归档 | 0；80–90 校验失败 |
+| `release` | 恢复已 claim 的 APPROVE 事务 | 0 |
+| `selftest` | 临时目录构造最小实验 + 故障注入 | 0 全过；1 有失败 |
+
+```bash
+python 2_tools/harness.py --root . status
+python 2_tools/harness.py --root . admit --round round_001
+python 2_tools/harness.py --root . seal --round round_001 --write
+python 2_tools/harness.py --root . review --round round_001 --kind PASS
+python 2_tools/harness.py --root . consume
+```
+
+失败时输出 JSON：`{"ok": false, "error": "...", "code": N, "details": {...}}`。模型只负责理解、实现与语义判断；程序负责确定规则。
 
 ## 放这里
 

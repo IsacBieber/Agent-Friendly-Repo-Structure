@@ -25,8 +25,9 @@
 - **状态只由文件推导**：不写“本轮状态”；`work.md` / `check.md` 存在且合法才是阶段完成。
 - **原子提交**：报告先写 `.tmp`，校验后原子改名；`.tmp` 不算完成。
 - **分层不可变**：ADMIT 前身份文件可修正；ADMIT 后冻结；`work.md` 提交后 artifact 封存；最终验收 Review 生成后整轮不可变。`ACTION_APPROVAL` 只暂停外部操作，不冻结 Round。
-- **封存**：check 首尾各算一次树哈希。开始不一致 → check 写 `evidence/seal_invalid_NNN.md`，Main 归档 `work.md`，同轮重做 WORK；结束 `E != 开始 S`（且 `S = work 自报 W`）意味着 `E != W`，本轮证据作废、禁止 PASS；可归因则同轮重交封存，越权/无法归因 → BLOCKED。不存在“封存仍有效只重做 CHECK”的分支。
-- **父产物**：新 Round 只继承最近一个 check 已完成且 artifact 哈希一致的 Round；Release 不作为父对象，未封存 Work 不得升格为候选。
+- **封存**：check 首尾各算一次树哈希。开始不一致 → check 写 `evidence/seal_invalid_NNN.md`，Main 将 `work.md` 移动到 `evidence/work_archived_NNN.md`（旧 marker 失效、解除封存），同轮允许 Work 重新执行并提交新 `work.md`；结束 `E != 开始 S`（且 `S = work 自报 W`）意味着 `E != W`，本轮不提交正式 check，可归因则回 WORK 重交封存，越权/无法归因 → BLOCKED。
+- **父产物**：新 Round 只继承最近一个结论为 PASS 或 FAIL、身份一致且 artifact 哈希匹配的合法 Check Round；BLOCKED 与无效 check 排除，Release 不作为父对象，未封存 Work 不得升格为候选。
+- **正式结论**：check.md 只允许 PASS / FAIL / BLOCKED；INVALID 表示本次检查无效，不提交 check.md。
 - **终结型 Review**：`PASS`、`BLOCKED_CHECK`、`BLOCKED_STALL`、`BLOCKED_GATE` 生成后该 Round 不可变；`ACTION_APPROVAL` 不冻结 Round。
 - **证据复用按验证项**：`evidence_key` 匹配才可复用；记录 `origin_candidate` 与 `applied_to_candidate`；依赖不完整或 `fresh: required` 不复用。
 - **临时脚本归 evidence**：本轮验证脚本放 `evidence/scripts/`，与输出、哈希同处；跨轮稳定工具才进 `2_tools/`。

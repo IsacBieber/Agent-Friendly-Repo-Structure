@@ -1,6 +1,6 @@
-# agent-task-harness 2.2.1
+# agent-task-harness 2.2.2
 
-面向 Agent 长程自治任务的文件系统框架。2.2.1 是 2.2 的二次结构审计勘误：补冻结锚点、阻塞终结分支、执行前审批与发布串行化。
+面向 Agent 长程自治任务的文件系统框架。2.2.2 是最小可运行版本：协议做减法，确定性规则交给 `2_tools/harness.py`，模型只负责理解、实现与语义判断。
 
 ## 解决什么问题
 
@@ -11,7 +11,8 @@
 - 验证器故障被误当成业务失败；
 - 验证器“跑通了”被误当成“足以证明”；
 - 外部操作批准后无法继续、或崩溃后盲重试；
-- 旧批准、旧证据在新输入后仍被误用。
+- 旧批准、旧证据在新输入后仍被误用；
+- 模型手工算哈希、判断状态合法性，容易产生歧义。
 
 ## 核心流程
 
@@ -29,13 +30,15 @@ Work：执行；外部操作在真正调用前审批并落 operations.md
 Check
   1 身份与封存
   2 验证项执行或有效复用（失败先分类）
-  3 覆盖合成 → PASS / FAIL / BLOCKED / INVALID / UNVERIFIED
+  3 覆盖合成 → PASS / FAIL / BLOCKED（INVALID 不提交正式 check）
       ↓
 FAIL(业务) → 新 Round；验证器/环境故障 → 同轮修复
-PASS / BLOCKED → 最终 Review（异常优先）→ Human Decision
+PASS / BLOCKED → 终结型 Review（异常优先）→ Human Decision
       ↓
 有效且正文未变的 APPROVE → release_NNN 原子提交
 ```
+
+确定性步骤（status / admit / seal / evidence / review / consume / release / selftest）由 [2_tools/harness.py](<2_tools/harness.py>) 执行；模型只负责内容与判断。
 
 ## 关键角色
 
@@ -105,22 +108,35 @@ check_sha + index_sha → review_id（含 review_kind）→ review_sha → decis
 | 业务失败 | FAIL，新 Round |
 | 验证器故障 | 修验证器，同轮重跑 |
 | 环境异常 | 修环境；无解 BLOCKED |
-| 证据无效 | INVALID CHECK，同轮重做 |
+| 证据无效 | 不提交正式 check；归档后同轮重做 |
 | 未验证 | 不允许 PASS，补验或 BLOCKED |
 
-同一失败 key 连续两次无有效改善 → BLOCKED，停止重试。
+正式 check 结论只有 PASS / FAIL / BLOCKED；INVALID 表示本次检查无效。同一失败 key 连续两次无有效改善，或达到 `最大业务返工轮数` → BLOCKED。
 
 ## 快速开始
 
-1. 追加原话到 `1_input/raw.md`。
-2. 更新 `processed.md`：条目、`已处理至`、验收计划（含判定依据）。
-3. 创建 Round：独立 artifact、`meta.md`、冻结 `input.md`、写 assignment。
-4. 运行或复用 Gate，ADMIT 后冻结身份文件。
-5. WORK；外部操作在调用受控入口前审批（批准后同轮继续）。
-6. 提交 `work.md`，artifact 封存。
-7. CHECK：身份 → 验证项 → 覆盖合成；CHECK 期间 artifact 变化则本轮证据作废。
-8. PASS/BLOCKED/BLOCKED_GATE 生成终结型 Review；人类只需读 `4_review/REVIEW.md`。
-9. 人类在 `decision.md` 对绑定的 `review_id` 与 `review_sha` 做决定。
-10. 有效 APPROVE 原子生成 `5_release/release_NNN/`。
+```bash
+# 1. 查看当前阶段与下一步（必须先跑）
+python 2_tools/harness.py --root . status
+
+# 2. 派工准入、产物封存
+python 2_tools/harness.py --root . admit --round round_001
+python 2_tools/harness.py --root . seal --round round_001 --write
+
+# 3. 记录并校验证据
+python 2_tools/harness.py --root . evidence --round round_001 record \
+  --id E1 --requirement R1 --command "pytest -q" --output evidence/test.log \
+  --dep artifact/src.py --verifier pytest
+python 2_tools/harness.py --root . evidence --round round_001 verify
+
+# 4. 生成 Review 与决定入口，人工决定后消费
+python 2_tools/harness.py --root . review --round round_001 --kind PASS
+python 2_tools/harness.py --root . consume
+
+# 5. 自测（临时目录，含封存不一致、决定被覆盖、缺 check 等故障）
+python 2_tools/harness.py selftest
+```
+
+流程：Input → Round（冻结）→ Gate ADMIT → Work（外部操作执行前审批）→ 提交 work.md 封存 → Check（身份 → 验证项 → 覆盖合成）→ 终结型 Review → Human Decision → 原子 Release。
 
 完整协议见 [ENGINE.md](ENGINE.md)。
