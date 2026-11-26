@@ -2,6 +2,22 @@
 
 面向 Agent 长程自治任务的文件系统框架。2.2.2 是最小可运行版本：协议做减法，确定性规则交给 `2_tools/harness.py`，模型只负责理解、实现与语义判断。
 
+## 安装可移植 Skill
+
+选用支持 [Agent Skills](https://agentskills.io/specification) 的客户端。在公司电脑上用 [skills CLI](https://github.com/vercel-labs/skills) 安装时，从提示中选你实际使用的客户端。
+
+```bash
+npx skills add IsacBieber/Agent-Friendly-Repo-Structure --skill agent-harness -g
+```
+
+手动安装时，把 [`skills/agent-harness/`](skills/agent-harness/) 整个目录复制到客户端的技能目录。例如 [Claude Code](https://code.claude.com/docs/en/skills) 的个人目录是 `~/.claude/skills/`。安装包仅包含 Markdown，可直接读取，运行时依赖客户端对项目文件的访问能力。
+
+打开目标项目后说 **「启动验收流程，帮我……」**。换会话后说「继续验收任务」或「查看验收进度」，也可以附任务 ID。在 Claude Code 可通过 `/agent-harness` 明确选中 Skill。
+
+任务记录写入项目的 `.agent-harness/`。在另一台机器上续接同一任务时，需要能访问同一份记录和产物。整合依据见 [开源调研与设计](docs/skill-design.zh-CN.md)。
+
+下面是完整文件协议和本地 CLI 的说明。
+
 ## 解决什么问题
 
 - 状态混乱、中断后无法恢复；
