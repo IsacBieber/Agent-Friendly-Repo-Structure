@@ -10,11 +10,11 @@
 npx skills add IsacBieber/Agent-Friendly-Repo-Structure --skill agent-harness -g
 ```
 
-手动安装时，把 [`skills/agent-harness/`](skills/agent-harness/) 整个目录复制到客户端的技能目录。例如 [Claude Code](https://code.claude.com/docs/en/skills) 的个人目录是 `~/.claude/skills/`。安装包仅包含 Markdown，可直接读取，运行时依赖客户端对项目文件的访问能力。
+手动安装时，把 [`skills/agent-harness/`](skills/agent-harness/) 整个目录复制到客户端的技能目录。例如 [Claude Code](https://code.claude.com/docs/en/skills) 的个人目录是 `~/.claude/skills/`。基础流程使用 Markdown。随包提供的本地验证器需要 Python 3.9 及以上，可接项目已有的 pytest、JUnit 和 Ruff。
 
 打开目标项目后说 **「启动验收流程，帮我……」**。换会话后说「继续验收任务」或「查看验收进度」，也可以附任务 ID。在 Claude Code 可通过 `/agent-harness` 明确选中 Skill。
 
-任务记录写入项目的 `.agent-harness/`。在另一台机器上续接同一任务时，需要能访问同一份记录和产物。整合依据见 [开源调研与设计](docs/skill-design.zh-CN.md)。
+任务记录写入项目的 `.agent-harness/`。在另一台机器上续接同一任务时，需要能访问同一份记录和产物。[本地验证](skills/agent-harness/references/verification.md)说明如何冻结验收计划和核对回执。[独立复核](skills/agent-harness/references/independent-review.md)提供评审交接和提示模板。整合依据见 [开源调研与设计](docs/skill-design.zh-CN.md)。
 
 下面是完整文件协议和本地 CLI 的说明。
 
